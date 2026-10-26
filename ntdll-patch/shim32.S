@@ -10,13 +10,8 @@ shim_entry32:
 delta_ref:
     pop     ecx
     sub     ecx, offset delta_ref       // ecx = load base, preferred base
-#if WM_IN_EBX
-    mov     esi, ebx                    // wm, read before ebx takes fp
-    mov     ebx, ebp
-#else
-    mov     ebx, ebp                    // fp; ebx/esi survive the cdecl call 
-    mov     esi, WM_REG                 // wm 
-#endif
+    mov     esi, WM_REG                 // wm, read first since it may be in ebx
+    mov     ebx, ebp                    // fp; ebx/esi survive the cdecl call
     mov     edi, esp                    // pre-align esp, for an exact restore 
     and     esp, -16
     sub     esp, 0x30                   // [esp+0x00..0x0B] args, [esp+0x0C..0x27] ctx 
