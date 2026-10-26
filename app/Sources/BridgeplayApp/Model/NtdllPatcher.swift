@@ -272,7 +272,7 @@ enum NtdllPatcher {
             NtdllPatch(
                 arch: .i386Windows,
                 payloadResource: "detour32-winehq-11.15",
-                payloadSHA256: "527431a3a74e9dff7bc3582277ddfa7b44bcac6fba285c028fd2c94fd9202418",
+                payloadSHA256: "a3b0e422b5133d4b3c795f24771bf247fee8a3b0c9fbb765f7276e48e52c93e6",
                 caveRVA: 0x6a075,
                 payloadRVA: 0x6a080,
                 hooks: [
