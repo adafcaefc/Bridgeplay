@@ -423,7 +423,7 @@ enum FreeEngineWinecx {
     // layout that is neither stock nor a complete D3DMetal link.
     static func layoutProblems(root: URL, release: WinecxRelease = current) -> [String] {
         var problems = expectedFiles(release).filter { path, hash in
-            Digest.sha256IfPresent(root.appending(path: path)) != hash
+            !SignedPin.matches(root.appending(path: path), sha256: hash)
         }.keys.sorted()
         if !FileManager.default.fileExists(atPath: msyncMarker(in: root).path(percentEncoded: false)) {
             problems.append(msyncMarkerPath)
@@ -535,7 +535,7 @@ enum FreeEngineWinecx {
         ]
         let plist = try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
         try plist.write(to: shaped.appending(path: "Contents/Info.plist"))
-        RunnerInstaller.scrubDownloadMarkers(at: shaped)
+        try RunnerInstaller.clearQuarantine(at: shaped)
 
         let install = CrossOverSource.inspect(bundle: shaped)
         guard case .supported(let build) = install.support, build.id == release.build else {
@@ -558,19 +558,38 @@ enum FreeEngineWinecx {
     }
 
     // Puts each bundled file, checked against its pin, over or beside the engine's own.
-    static func installBundled(_ files: [WinecxBundledFile], root: URL) throws {
+    static func installBundled(_ files: [WinecxBundledFile], root: URL, bundle: Bundle = .module) throws {
         let fm = FileManager.default
         for file in files {
-            guard let source = Bundle.module.url(forResource: file.resource, withExtension: file.ext),
-                  Digest.sha256IfPresent(source) == file.sha256
-            else {
-                throw StepFailure(step: step, detail: "Bridgeplay is missing its \(file.resource).\(file.ext).")
-            }
+            let source = try bundledSource(file, in: bundle)
             let destination = root.appending(path: file.path)
             try fm.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? fm.removeItem(at: destination)
             try fm.copyItem(at: source, to: destination)
         }
+    }
+
+    // The app's copy of a bundled file. Each failure says which check failed (#1295 could
+    // not tell a missing file from a damaged one), and the log gets the path and hashes.
+    static func bundledSource(_ file: WinecxBundledFile, in bundle: Bundle = .module) throws -> URL {
+        let name = "\(file.resource).\(file.ext)"
+        guard let source = bundle.url(forResource: file.resource, withExtension: file.ext) else {
+            AppLog.note("bundled file: \(name) not found in \(bundle.bundleURL.path(percentEncoded: false))")
+            throw StepFailure(step: step, detail: "Bridgeplay is missing its \(name). Reinstall Bridgeplay.")
+        }
+        let path = source.path(percentEncoded: false)
+        let actual: String
+        do {
+            actual = try Digest.sha256(of: source)
+        } catch {
+            AppLog.note("bundled file: \(name) at \(path) can't be read: \(error.localizedDescription)")
+            throw StepFailure(step: step, detail: "Bridgeplay can't read its \(name). Reinstall Bridgeplay.")
+        }
+        guard actual == file.sha256 || SignedPin.matches(source, sha256: file.sha256) else {
+            AppLog.note("bundled file: \(name) at \(path) has sha256 \(actual), expected \(file.sha256)")
+            throw StepFailure(step: step, detail: "Bridgeplay's \(name) doesn't match its pinned checksum. Reinstall Bridgeplay.")
+        }
+        return source
     }
 
     private static func untar(_ archive: URL, into directory: URL) throws {

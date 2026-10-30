@@ -66,16 +66,16 @@ To add yours: after you play, Bridgeplay asks once per game *How did it run?* On
 
 ## Install
 
-1. **Download the installer** from [bridgeplay.dev](https://bridgeplay.dev): `Bridgeplay-Setup.zip`, under 1 MB. It fetches Bridgeplay, Apple's graphics, the engine and Steam (from Valve, if missing) as it installs, and checks every download against Bridgeplay's signature.
-2. **Open Bridgeplay Installer.** macOS blocks it the first time: `READ ME FIRST.html` in the download shows the three clicks, Done, then **Open Anyway** in **System Settings > Privacy & Security**, then confirm with your password or Touch ID. It needs an admin account.
-3. **Follow the Setup Assistant**: Rosetta, graphics, Steam sign-in, App Management and a couple of other standard macOS prompts. Setup modifies your Steam app; see [What Bridgeplay changes in Steam](#what-bridgeplay-changes-in-steam).
+1. **Download Bridgeplay** from [bridgeplay.dev](https://bridgeplay.dev): `Bridgeplay.dmg`, notarized by Apple.
+2. **Drag Bridgeplay into Applications** and open it. macOS asks once whether to open an app downloaded from the internet: click **Open**. It needs an admin account.
+3. **Follow the Setup Assistant**: Rosetta, Apple's graphics (Download fetches them, and Steam from Valve if it's missing), Steam sign-in, App Management and a couple of other standard macOS prompts. Every download is checked against Bridgeplay's signature. Setup modifies your Steam app; see [What Bridgeplay changes in Steam](#what-bridgeplay-changes-in-steam).
 4. **Press Play** on any Windows game in Steam. The first time you use a controller, allow Steam's Input Monitoring request.
 
 Each game's Bridgeplay settings (graphics backend, Metal HUD, DLSS, frame generation, controllers) are in Steam: right-click the game, **Properties… › Bridgeplay**.
 
 Updates install themselves: Bridgeplay, its patch in Steam and the engine. **Refresh** on the Status page checks on demand.
 
-The installer includes Apple's Game Porting Toolkit redistributables under Apple's license, which allows non-commercial distribution only. Bridgeplay is free and non-commercial.
+The Setup Assistant's graphics download carries Apple's Game Porting Toolkit redistributables under Apple's license, which allows non-commercial distribution only. Bridgeplay is free and non-commercial.
 
 <p align="center">
   <img src="docs/readme/install-v5.png" alt="The Setup Assistant working through Your Mac, Rosetta, Graphics, Steam and Set Up" width="100%">
@@ -90,23 +90,27 @@ The installer includes Apple's Game Porting Toolkit redistributables under Apple
 | | |
 |---|---|
 | Mac | Apple Silicon, M1 or later. Intel Macs are not supported. |
-| macOS | 26 or later |
+| macOS | 26 or later ([macOS version guide](https://bridgeplay.dev/guides/macos-version-requirements)) |
 | Steam | A Steam account. Windows games install from Steam as usual. |
-| Download | About 570 MB. Installing Rosetta 2 and Steam, and signing in to Steam, need internet. |
+| Download | About 530 MB, most of it the engine the Setup Assistant fetches. Installing Rosetta 2 and Steam, and signing in to Steam, need internet. |
+
+## Guides and help
+
+The [guides on bridgeplay.dev](https://bridgeplay.dev/guides) cover installing Bridgeplay, troubleshooting, DirectX 12, DLSS and frame generation, and anti-cheat. The [FAQ](https://bridgeplay.dev/faq) answers common questions, and the [compatibility list](https://bridgeplay.dev/compatibility) shows which games other players got running.
 
 ## How it works
 
 Bridgeplay runs inside the native macOS Steam client and registers itself as a Steam Play compatibility tool. Under the hood:
 
 - **Engine:** CodeWeavers' open-source WineCX 11.17 with MSync, running under Rosetta 2. Bridgeplay does not include CrossOver: its free engine is built from the LGPL source CodeWeavers publishes ([dappermint/winecx](https://github.com/dappermint/winecx)). If you own CrossOver, Bridgeplay can run games on your copy instead.
-- **Graphics:** Apple's Game Porting Toolkit 4.0 beta 3 (D3DMetal). It is not stored in this repository; the installer ships its redistributables under Apple's non-commercial license (see Install). DXMT and DXVK are available for games that prefer them.
+- **Graphics:** Apple's Game Porting Toolkit 4.0 beta 3 (D3DMetal). It is not stored in this repository; the Setup Assistant downloads its redistributables, which ship under Apple's non-commercial license (see Install). DXMT and DXVK are available for games that prefer them.
 - **Extras:** NVAPI/NGX routing for DLSS on Apple's MetalFX, in-process frame generation on `CAMetalLayer`, per-game Game Mode, Retina back buffers and a controller layer for HID pads.
 
 <p align="center">
   <img src="docs/readme/architecture-v5.png" alt="How a Windows game reaches the Mac's GPU: Steam, Bridgeplay, the WineCX and Wine engines, D3DMetal, DXMT, DXVK and MoltenVK, then Metal, with the open-source project behind each piece" width="100%">
 </p>
 
-Building from source: see [docs/DEVELOPING.md](docs/DEVELOPING.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/BUILD-LOCAL.md](docs/BUILD-LOCAL.md). The installer lives in [`installer/`](installer/) and is packaged by `scripts/package-installer.sh`.
+Building from source: see [docs/DEVELOPING.md](docs/DEVELOPING.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/BUILD-LOCAL.md](docs/BUILD-LOCAL.md). The graphics download (`Bridgeplay-Installer.zip`) is built from [`installer/`](installer/) by `scripts/package-installer.sh`.
 
 ## What Bridgeplay changes in Steam
 
@@ -117,7 +121,7 @@ Also changed:
 - Steam's default compatibility tool is set in `config.vdf`, and Bridgeplay's tools go in `compatibilitytools.d`.
 - Steam's Accessibility and input permissions are reset (`tccutil`), so macOS asks again.
 - Steam is signed with a local "NotProton Local Signing" keychain identity, or ad hoc, and loses Valve's hardened runtime.
-- The quarantine flag is removed from Steam.app and Bridgeplay's folder, and Wine loaders are re-signed ad hoc where needed.
+- The quarantine flag is removed from Bridgeplay.app and Steam.app once their signatures check out, from the Wine engine once it matches its pins, and from a CrossOver clone once its Wine loader and `ntdll.dll` match theirs (the rest of the clone isn't checked file by file). Wine loaders are re-signed ad hoc where needed.
 - Optional **Block Steam client updates** (`steam.cfg`) also blocks Steam's security fixes.
 - The library loads for every macOS user of a shared `/Applications/Steam.app`.
 - In games, Steam calls reach your Mac Steam through Proton's lsteamclient, via an in-memory redirect (`ntdll-patch/`).
@@ -135,7 +139,7 @@ Online games with anti-cheat (Easy Anti-Cheat, BattlEye and others) often won't 
 
 Bridgeplay is a fork of [NotProton](https://github.com/NotProtonNot/NotProton) by [NotProtonNot](https://github.com/NotProtonNot) and [its contributors](https://github.com/NotProtonNot/NotProton/graphs/contributors) (GPL-3.0), by way of [Leon Seemann](https://github.com/leonseemann)'s NotProton-WineHQ. The Steam hooks, the Steam Play interface patches, the run script and the steamclient bridge all started as their work. Copyright and license details are in [NOTICE](NOTICE).
 
-- **Engine:** CodeWeavers' [WineCX](https://www.codeweavers.com/crossover) (LGPL-2.1-or-later), as rebased by [dappermint](https://github.com/dappermint/winecx) and packaged with [winecx-gptk](https://github.com/dappermint/winecx-gptk).
+- **Engine:** CodeWeavers' [WineCX](https://www.codeweavers.com/crossover) (LGPL-2.1-or-later), their branch of [Wine](https://www.winehq.org), as rebased by [dappermint](https://github.com/dappermint/winecx) and packaged with [winecx-gptk](https://github.com/dappermint/winecx-gptk).
 - **Graphics:** Apple's [Game Porting Toolkit](https://developer.apple.com/games/game-porting-toolkit/) (Apple's license), [DXMT](https://github.com/3Shain/dxmt) by 3Shain and [DXVK-macOS](https://github.com/Gcenx/DXVK-macOS) by Gcenx.
 - **Steam bridge:** `lsteamclient` and `steam.exe` come from Valve's [Proton](https://github.com/ValveSoftware/Proton).
 - **Controllers and Game Mode:** [sn0wst0rm](https://github.com/sn0wst0rm) wrote the DualSense Bluetooth bridge, Steam rumble forwarding and game-mode host that Bridgeplay 0.7.51 and earlier shipped. They are paused until NotProton merges the same work ([NotProton#90](https://github.com/NotProtonNot/NotProton/pull/90)).

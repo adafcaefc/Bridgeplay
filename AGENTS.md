@@ -59,7 +59,7 @@ The checks the workflows run (`make -s <target>`):
 - **C and shell suites:** `sigcheck`, `callscheck`, `webpatch-fixtures`, `peicon-fixtures`,
   `panel-behavior`, `spawn-env`, `activatecheck`, `compatcheck`, `compatsvc-check`, `prefixstate-check`,
   `shortcutcheck`, `launch-shell`, `envcheck`, `buildcheck`, `settingscheck`, `routecheck`,
-  `bridgecheck`, `envpasscheck`, `prefixnotecheck`, `powernotecheck`, `exitcheck`, `gamedrivecheck`, `launchercheck`, `seedcheck`, `gamefixescheck`, `versioncheck`, `cicheck`,
+  `bridgecheck`, `envpasscheck`, `prefixnotecheck`, `powernotecheck`, `exitcheck`, `launchprogresscheck`, `gamedrivecheck`, `launchercheck`, `seedcheck`, `gamefixescheck`, `versioncheck`, `cicheck`,
   `compat-reported-check`
 
 `make tests-list` prints the test paths. A check whose tool or input is missing prints
@@ -79,7 +79,10 @@ the dylib into `Steam.app` and installs the signatures, fonts and helpers into
   don't amend or reset the author; a rewrite keeps the original author or adds a
   `Co-authored-by:` line and names the source commit or PR. New third-party code goes in
   [NOTICE](NOTICE). See CONTRIBUTING.md.
-- **PR descriptions** are written by the contributor in their own words. Don't generate one.
+- **PR descriptions:** an agent may draft one, filling every section of
+  `.github/pull_request_template.md` with the checks actually run and what wasn't tested.
+  The contributor reviews it before the PR opens. Replies to people in issues, PRs and
+  discussions are written by a human, not generated.
 - **Comments:** keep them short. Comment where the code is hard to follow, not where it is
   obvious.
 - **Run the checks your change touches** before opening a PR.
@@ -94,8 +97,9 @@ the dylib into `Steam.app` and installs the signatures, fonts and helpers into
 - **Wine patches:** a patch change is not finished until the binary it produces is
   rebuilt with the recipe in [docs/WINECX.md](docs/WINECX.md) or the patch folder's
   README. Then update its sha256 pins (in `docs/WINECX.md` and
-  `app/Sources/BridgeplayApp/Model/FreeEngineWinecx.swift`) and its entry in
-  [NOTICE](NOTICE). Don't commit a binary without its patch.
+  `app/Sources/BridgeplayApp/Model/FreeEngineWinecx.swift`, plus
+  `app/Sources/BridgeplayApp/Support/SignedPin.swift` for a `.so` or `.dylib`) and its
+  entry in [NOTICE](NOTICE). Don't commit a binary without its patch.
 - **Legacy names stay:** existing installs depend on `notproton.dylib`, the `NOTPROTON_*`
   variables, `com.notproton.*` identifiers and the fallback to the old `notproton` support
   folders. Don't rename them. User-facing names are Bridgeplay's (`BRIDGEPLAY_*`).

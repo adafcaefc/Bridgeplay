@@ -6,8 +6,11 @@ configs from the folder it sits in, downloads Steam from Valve's CDN when
 `/Applications/Steam.app` is missing, then opens the app's Setup Assistant. The Setup
 Assistant downloads the WineCX engine (dappermint/winecx-gptk's runtime) itself: the zip does
 not carry it, because it bundles GPL libraries whose source neither project publishes (see
-`NOTICE`). `Bridgeplay Installer.app` runs the same script without the app step
-([docs/NATIVE-INSTALLER.md](../docs/NATIVE-INSTALLER.md)).
+`NOTICE`). `Bridgeplay Installer.app` and the app's own Setup Assistant (Download in its
+Graphics step) no longer run this script: `ComponentsPlacement` in `BridgeplayInstallerCore`
+does the same steps without the app step ([docs/NATIVE-INSTALLER.md](../docs/NATIVE-INSTALLER.md)).
+The zip still carries the script for app versions before that, so a change to one belongs in
+the other.
 
 Before copying Steam, `Install.command` verifies its strict code signature against Apple's
 trust chain, Valve's Team ID, and the `com.valvesoftware.steam` bundle identifier.
@@ -38,11 +41,11 @@ which migrates them on first launch.
 Every Mach-O file in `gptk/` must pass `codesign --verify --strict -R 'anchor apple'`
 (Apple's own signature) or the script stops.
 
-`Install.command` puts the per-game confs in `gamefixes-default/`, the folder the app owns
-and refreshes on update, never in the user's `gamefixes/`. `config/gamefixes/default.conf`
-(the global file, installer-only) replaces the user's copy unless the user has edited it
-since the last install (`.installer/default.conf` records that copy); an edited one is kept
-and the new file lands next to it as `default.conf.new`.
+`Install.command` puts the confs from the repository's `gamefixes/`, `default.conf` (Bridgeplay's
+defaults for every game) included, in `gamefixes-default/`, the folder the app owns and
+refreshes on update. It never writes to the user's `gamefixes/`. Earlier installers copied
+`default.conf` there and recorded that copy in `.installer/default.conf`; the app uses the
+record once to trim the user's file down to their own changes.
 
 Never shipped: Valve's Steam client and the Steam packages in `valve-packages/` (the app
 downloads those from Valve's CDN) and the WineCX runtime (the app downloads it from

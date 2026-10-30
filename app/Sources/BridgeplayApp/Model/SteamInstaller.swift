@@ -66,6 +66,17 @@ enum SteamInstaller {
         }
     }
 
+    // Typed so Setup can offer Repair Steam for it.
+    struct ForeignInsert: LocalizedError {
+        let tool: String
+
+        var errorDescription: String? {
+            StepFailure(step: SteamInstaller.step,
+                        detail: String(localized: "\(tool) is already set up in Steam, and Bridgeplay won't install on top of it. Repair Steam to remove it, then try again."))
+                .errorDescription
+        }
+    }
+
     static func run(
         payload suppliedPayload: InstallPayload.Located? = nil,
         bridgePayload suppliedBridge: BridgePayload.Located? = nil,
@@ -172,6 +183,12 @@ enum SteamInstaller {
         }
         pruneGamefixes(keeping: payload.gamefixes.map(\.lastPathComponent),
                        in: deployedVersion.deletingLastPathComponent().appending(path: "gamefixes-default"))
+        // The shipped defaults now sit in gamefixes-default/, so the user's file keeps only their own.
+        do {
+            try GameDefaults.splitShipped(in: support)
+        } catch {
+            AppLog.note("game defaults: could not split the shipped defaults out: \(error.localizedDescription)")
+        }
         try removeStaleFonts(in: fonts, keeping: payload.fonts)
 
         var backedUp = false
@@ -186,10 +203,11 @@ enum SteamInstaller {
                 try setInsert(at: plist, to: dylib)
 
                 report(.signing)
-                let identity = signingIdentity()
-                try sign(dylib, identity: identity)
-                try sign(app.appending(path: "Contents/MacOS/steam_osx"), identity: identity)
-                try sign(app, identity: identity)
+                try LocalSigning.unlocked(signingIdentity()) { identity in
+                    try sign(dylib, identity: identity)
+                    try sign(app.appending(path: "Contents/MacOS/steam_osx"), identity: identity)
+                    try sign(app, identity: identity)
+                }
             } catch {
                 do {
                     try revertPlist(priorPlist, at: plist, app: app)
@@ -300,13 +318,8 @@ enum SteamInstaller {
     static func assertInsertIsDeployedOrAbsent(at plist: URL, dylib: URL) throws {
         guard let insert = SteamBundle.currentInsert(at: plist), !insert.isEmpty else { return }
 
-        let deployed = dylib.path(percentEncoded: false)
-        let foreign = insert.split(separator: ":").map(String.init).filter { $0 != deployed }
-        guard foreign.isEmpty else {
-            throw StepFailure(
-                step: step,
-                detail: String(localized: "Another dylib is present. Repair your Steam install before installing Bridgeplay.")
-            )
+        if let tool = SteamBundle.foreignTool(in: insert, deployed: dylib.path(percentEncoded: false)) {
+            throw ForeignInsert(tool: tool)
         }
     }
 
@@ -416,23 +429,29 @@ enum SteamInstaller {
         try sign(url, identity: "-", step: step)
     }
 
-    // A self-signed code signing identity in the login keychain. When it exists Steam is signed
-    // with it instead of ad hoc, which keeps its designated requirement, and with it the user's
-    // Input Monitoring approval, the same across Bridgeplay updates.
+    // A self-signed code signing identity, in Bridgeplay's own keychain (or the login keychain
+    // on older installs). When it exists Steam is signed with it instead of ad hoc, which keeps
+    // its designated requirement, and with it the user's Input Monitoring approval, the same
+    // across Bridgeplay updates.
     static let localSigningIdentity = "NotProton Local Signing"
 
     // LocalSigning creates it from the Setup Assistant or the Status page.
-    static func signingIdentity() -> String {
-        LocalSigning.existingHash() ?? "-"
+    static func signingIdentity() -> LocalSigning.Identity? {
+        LocalSigning.existing()
     }
 
-    static func sign(_ url: URL, identity: String, step: String = step) throws {
+    static func sign(_ url: URL, identity: LocalSigning.Identity?, step: String = step) throws {
+        try sign(url, identity: identity?.hash ?? "-", keychain: identity?.keychain, step: step)
+    }
+
+    static func sign(_ url: URL, identity: String, keychain: URL? = nil, step: String = step) throws {
         let path = url.path(percentEncoded: false)
-        var result = try Shell.run("/usr/bin/codesign", ["-f", "-s", identity, path])
+        let lookup = keychain.map { ["--keychain", $0.path(percentEncoded: false)] } ?? []
+        var result = try Shell.run("/usr/bin/codesign", ["-f", "-s", identity] + lookup + [path])
         // Fixes codesign refusing a Steam.app that carries Finder info or a resource fork.
         if !result.succeeded, result.stderr.contains("detritus not allowed") {
             clearFinderData(in: enclosingBundle(of: url))
-            result = try Shell.run("/usr/bin/codesign", ["-f", "-s", identity, path])
+            result = try Shell.run("/usr/bin/codesign", ["-f", "-s", identity] + lookup + [path])
         }
         // A keychain that refuses the identity must not leave Steam unsigned.
         if !result.succeeded, identity != "-" {

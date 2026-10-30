@@ -185,6 +185,8 @@ final class DownloadMeter {
     private(set) var remaining: TimeInterval?
     private(set) var paused = false
     @ObservationIgnored fileprivate weak var relay: ProgressRelay?
+    // Pauses a download that has no ProgressRelay (the installer components' own session).
+    @ObservationIgnored var pauseControl: ((Bool) -> Void)?
 
     var fraction: Double? { host != nil && total > 0 ? Double(received) / Double(total) : nil }
     // "Downloading from github.com", for the row above the bar.
@@ -202,12 +204,13 @@ final class DownloadMeter {
         host = nil
         paused = false
         relay = nil
+        pauseControl = nil
     }
 
     func togglePause() {
         guard host != nil else { return }
         paused.toggle()
-        paused ? relay?.suspend() : relay?.resume()
+        if let pauseControl { pauseControl(paused) } else { paused ? relay?.suspend() : relay?.resume() }
         AppLog.note("download \(paused ? "paused" : "resumed") at \(received) of \(total) bytes")
     }
 }
@@ -229,8 +232,10 @@ final class ProgressRelay: NSObject, URLSessionTaskDelegate, @unchecked Sendable
     }
 
     func urlSession(_ session: URLSession, didCreateTask task: URLSessionTask) {
-        let observation = task.progress.observe(\.completedUnitCount) { [weak self] progress, _ in
-            self?.update(received: progress.completedUnitCount, total: progress.totalUnitCount)
+        // The task's own byte counts: on macOS 27 task.progress counts 100 units, not bytes, and
+        // sits at 5 until the body is done, so the bar read "5 bytes / 100 bytes" for the whole engine.
+        let observation = task.observe(\.countOfBytesReceived) { [weak self] task, _ in
+            self?.update(received: task.countOfBytesReceived, total: task.countOfBytesExpectedToReceive)
         }
         lock.withLock { self.observation = observation; self.task = task }
         Task { @MainActor in

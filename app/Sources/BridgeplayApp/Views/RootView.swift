@@ -3,6 +3,7 @@ import BridgeplayUI
 
 enum Pane: String, CaseIterable, Identifiable, Hashable {
     case status
+    case gameDefaults
     case prefixes
     case backups
     case guide
@@ -12,6 +13,7 @@ enum Pane: String, CaseIterable, Identifiable, Hashable {
     var label: String {
         switch self {
         case .status: String(localized: "Status")
+        case .gameDefaults: String(localized: "Game Defaults")
         case .prefixes: String(localized: "Prefixes")
         case .backups: String(localized: "Prefix Backups")
         case .guide: String(localized: "Guide")
@@ -21,6 +23,7 @@ enum Pane: String, CaseIterable, Identifiable, Hashable {
     var symbol: String {
         switch self {
         case .status: "checklist"
+        case .gameDefaults: "slider.horizontal.3"
         case .prefixes: "externaldrive"
         case .backups: "externaldrive.badge.timemachine"
         case .guide: "book"
@@ -47,7 +50,7 @@ struct RootView: View {
             .scrollContentBackground(.hidden)
             .background(BP.bg)
             .safeAreaInset(edge: .top, spacing: 0) {
-                HStack(spacing: 9) {
+                HStack(spacing: 4.4) {
                     BridgeplayMark(size: 22)
                     Text(verbatim: "Bridgeplay")
                         .font(BP.display(13))
@@ -77,6 +80,7 @@ struct RootView: View {
             Group {
                 switch pane {
                 case .status: StatusView()
+                case .gameDefaults: GameDefaultsView()
                 case .prefixes: PrefixesView()
                 case .backups: BackupsView()
                 case .guide: GuideView()

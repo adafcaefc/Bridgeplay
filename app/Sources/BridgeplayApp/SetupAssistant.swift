@@ -1,4 +1,6 @@
 import AppKit
+import BridgeplayInstallerCore
+import BridgeplayUI
 import Foundation
 
 // Drives the Setup Assistant: checks first, asks only when a check fails, and runs the
@@ -40,6 +42,8 @@ final class SetupAssistant {
 
     // Mac
     var rosettaInstalled = SetupChecks.rosettaInstalled()
+    // Set when the password window was closed; the Rosetta row says so in place of an error.
+    var rosettaNote: String?
     let appleSilicon = SetupChecks.isAppleSilicon
     let macOSSupported = SetupChecks.macOSVersion.majorVersion >= SetupChecks.minimumMacOS
     let freeBytes = SetupChecks.freeBytes()
@@ -48,6 +52,9 @@ final class SetupAssistant {
     var gptk: WinecxD3DMetal.Payload?
     var gptkImages: [URL]
     var skippedGraphics = false
+    // "Installing the Game Porting Toolkit" once the components download is done.
+    var gptkProgress: String?
+    @ObservationIgnored private var componentsRate = DownloadRate()
 
     // Steam
     var steamInstalled = SteamBundle.isPresent
@@ -57,13 +64,19 @@ final class SetupAssistant {
     // The keychain identity that keeps Steam's controller permission across updates.
     enum TrustState: Equatable { case unknown, needed, working, done, declined(String) }
     var trust: TrustState = .unknown
+    // An older install's identity in the login keychain, which macOS asks about when Steam is signed.
+    var trustInLoginKeychain = false
 
     // Finish
     var tasks: [SetupTask] = SetupAssistant.plannedTasks
     var needsAppManagement = false
+    // The tool already set up in Steam, while Setup offers Repair Steam to remove it.
+    var needsSteamRepair: String?
+    // A repair stopped for App Management, resumed once it's granted.
+    @ObservationIgnored private(set) var repairPending = false
     @ObservationIgnored private var permissionWatch: Task<Void, Never>?
 
-    // Done: settings for every game, read from and written to gamefixes/default.conf.
+    // Done: two of the settings for every game (GameDefaults); the rest are on the Game Defaults page.
     var metalHUD = GameDefaults.isOn(.metalHUD)
     var highResolution = GameDefaults.isOn(.highResolution)
 
@@ -110,6 +123,7 @@ final class SetupAssistant {
         switch setting {
         case .metalHUD: metalHUD = on
         case .highResolution: highResolution = on
+        default: return
         }
         guard !isPreview else { return }
         do {
@@ -172,12 +186,18 @@ final class SetupAssistant {
     func installRosetta() async {
         isWorking = true
         defer { isWorking = false }
+        rosettaNote = nil
+        message = nil
         if isPreview { await pretend(); rosettaInstalled = true; return }
         do {
             try await Task.detached(priority: .userInitiated) { try SetupChecks.installRosetta() }.value
         } catch {
             AppLog.note("setup: Rosetta install failed: \(error.localizedDescription)")
-            message = SetupChecks.rosettaFailure(error)
+            if SetupChecks.rosettaCancelled(error) {
+                rosettaNote = SetupChecks.rosettaFailure(error)
+            } else {
+                message = SetupChecks.rosettaFailure(error)
+            }
         }
         rosettaInstalled = SetupChecks.rosettaInstalled()
     }
@@ -198,6 +218,62 @@ final class SetupAssistant {
         } catch {
             message = error.localizedDescription
         }
+    }
+
+    // The one-click installer's components zip, so the app alone is enough: BridgeplayInstallerCore
+    // checks its EdDSA signature and Apple's signature on GPTK, then copies GPTK, the DXMT and
+    // DXVK archives and the configs, and installs Steam from Valve when it is missing.
+    func downloadGPTK() async {
+        if let refusal = MigrationLaunch.shared.refusal {
+            message = refusal
+            return
+        }
+        isWorking = true
+        defer { isWorking = false; gptkProgress = nil }
+        message = nil
+        if isPreview {
+            await pretendDownload(host: "github.com", total: 504_399_923) { gptkProgress = $0 }
+            gptk = WinecxD3DMetal.Payload(libRoot: WinecxD3DMetal.userFolder, version: nil)
+            steamInstalled = true
+            return
+        }
+        let meter = DownloadMeter.shared
+        let control = InstallerDownloadControl()
+        let work = FileManager.default.temporaryDirectory
+            .appending(path: "bridgeplay-components-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer {
+            try? FileManager.default.removeItem(at: work)
+            meter.clear()
+        }
+        do {
+            let components = try await InstallerComponents.latest()
+            componentsRate = DownloadRate()
+            meter.pauseControl = { $0 ? control.pause() : control.resume() }
+            let archive = try await components.downloadAcrossRelease(to: work, control: control) { value in
+                Task { @MainActor [weak self] in
+                    // A report that lands after the download must not bring the bar back.
+                    guard let self, self.isWorking, self.gptkProgress == nil else { return }
+                    let total = value.total ?? components.length
+                    let speed = meter.paused ? nil : self.componentsRate.add(value.received)
+                    meter.update(host: components.archiveHost, received: value.received, total: total, speed: speed,
+                                 remaining: speed.flatMap { $0 > 0 ? Double(total - value.received) / $0 : nil })
+                }
+            }
+            meter.clear()
+            gptkProgress = String(localized: "Installing the Game Porting Toolkit")
+            try await Task.detached(priority: .userInitiated) {
+                try InstallerComponents.install(archive: archive, work: work, status: { AppLog.note("setup: components: \($0)") })
+            }.value
+        } catch {
+            AppLog.note("setup: components failed: \(error.localizedDescription)")
+            // The script's own reason, without the core's generic sentence in front of it.
+            let detail = if case InstallerError.componentsFailure(let reason)? = error as? InstallerError { reason }
+                else { error.localizedDescription }
+            message = String(localized: "The Game Porting Toolkit wasn't added. \(detail)")
+        }
+        gptk = WinecxD3DMetal.locate()
+        steamInstalled = SteamBundle.isPresent
+        if gptk != nil { gptkImages = [] }
     }
 
     // MARK: Steam
@@ -242,8 +318,9 @@ final class SetupAssistant {
 
     func checkTrust() async {
         guard trust == .unknown else { return }
-        let present = await Task.detached(priority: .utility) { LocalSigning.existingHash() != nil }.value
-        if trust == .unknown { trust = present ? .done : .needed }
+        let identity = await Task.detached(priority: .utility) { LocalSigning.existing() }.value
+        trustInLoginKeychain = identity != nil && identity?.keychain == nil
+        if trust == .unknown { trust = identity != nil ? .done : .needed }
     }
 
     // One click, no password: see LocalSigning for why no prompt is needed. A failure keeps
@@ -254,6 +331,7 @@ final class SetupAssistant {
         if isPreview { await pretend(); trust = .done; return }
         do {
             _ = try await Task.detached(priority: .userInitiated) { try LocalSigning.ensure() }.value
+            trustInLoginKeychain = await Task.detached(priority: .utility) { LocalSigning.existing()?.keychain == nil }.value
             trust = .done
         } catch {
             AppLog.note("setup: signing identity not created: \(error.localizedDescription)")
@@ -271,6 +349,8 @@ final class SetupAssistant {
         isWorking = true
         defer { isWorking = false }
         needsAppManagement = false
+        needsSteamRepair = nil
+        repairPending = false
         message = nil
         tasks = Self.plannedTasks
 
@@ -296,10 +376,10 @@ final class SetupAssistant {
         await status.installIntoSteam()
         if let failure = status.failure {
             if status.failureRemedy == .appManagement {
-                needsAppManagement = true
-                set("steam", .failed(String(localized: "macOS needs your permission first.")))
-                openAppManagement()
-                watchPermission(status)
+                askForAppManagement(status)
+            } else if let tool = (status.lastRunError as? SteamInstaller.ForeignInsert)?.tool {
+                needsSteamRepair = tool
+                set("steam", .failed(String(localized: "\(tool) is already set up in Steam.")))
             } else {
                 set("steam", .failed(failure))
             }
@@ -367,6 +447,54 @@ final class SetupAssistant {
         tasks[index].state = state
     }
 
+    // Repair Steam swaps in Valve's bundle, which also needs App Management.
+    func repairSteamAndRetry(with status: SystemStatus,
+                             repair: @MainActor (SystemStatus) async -> Void = { await $0.repairSteam() }) async {
+        guard !isWorking else { return }
+        // perform() drops a run that overlaps another without a failure, which would read as success.
+        guard !status.isBusy else {
+            set("steam", .failed(String(localized: "Bridgeplay is still busy with another task. Try again when it finishes.")))
+            return
+        }
+        isWorking = true
+        // A card left from an earlier attempt would hide this attempt's error and its Report button.
+        permissionWatch?.cancel()
+        permissionWatch = nil
+        needsAppManagement = false
+        needsSteamRepair = nil
+        repairPending = false
+        set("steam", .running)
+        await repair(status)
+        isWorking = false
+        if let failure = status.failure {
+            if repairFailed(failure, remedy: status.failureRemedy) {
+                openAppManagement()
+                watchPermission(status)
+            }
+            return
+        }
+        await finish(with: status)
+    }
+
+    // Shows why a repair failed; true when it waits for App Management and resumes after.
+    func repairFailed(_ failure: String, remedy: Remedy?) -> Bool {
+        guard remedy == .appManagement else {
+            set("steam", .failed(failure))
+            return false
+        }
+        needsAppManagement = true
+        repairPending = true
+        set("steam", .failed(String(localized: "macOS needs your permission first.")))
+        return true
+    }
+
+    private func askForAppManagement(_ status: SystemStatus) {
+        needsAppManagement = true
+        set("steam", .failed(String(localized: "macOS needs your permission first.")))
+        openAppManagement()
+        watchPermission(status)
+    }
+
     func openAppManagement() {
         if let pane = Remedy.appManagement.settingsPane { Remedy.openSettings(pane) }
     }
@@ -378,12 +506,24 @@ final class SetupAssistant {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(2))
                 guard let self, self.needsAppManagement else { return }
-                if Self.canWriteSteam() {
-                    await self.finish(with: status)
-                    return
-                }
+                if await self.resumeAfterPermission(status, canWrite: Self.canWriteSteam()) { return }
             }
         }
+    }
+
+    // One poll of the watch; false keeps it polling. A pending repair also waits while another
+    // run is in flight, since the repair would refuse it and nothing would retry.
+    func resumeAfterPermission(_ status: SystemStatus, canWrite: Bool,
+                               repair: @MainActor (SystemStatus) async -> Void = { await $0.repairSteam() }) async -> Bool {
+        guard canWrite, !(repairPending && status.isBusy) else { return false }
+        // Detached first, so the retry's own cancel doesn't stop this task mid-run.
+        permissionWatch = nil
+        if repairPending {
+            await repairSteamAndRetry(with: status, repair: repair)
+        } else {
+            await finish(with: status)
+        }
+        return true
     }
 
     nonisolated static func canWriteSteam(app: URL = SupportPaths.Steam.app) -> Bool {

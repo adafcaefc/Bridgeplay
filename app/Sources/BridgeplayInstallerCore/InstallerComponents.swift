@@ -2,9 +2,9 @@ import Foundation
 
 /// Apple's Game Porting Toolkit, DXMT, DXVK and the default configs (not WineCX, which the
 /// app downloads from dappermint): the one-click
-/// installer ZIP on the `installer` release, which Install.command inside it puts in place.
-/// The wizard downloads it only when this Mac lacks them, checks it against the same EdDSA
-/// key as the app, then runs that Install.command without the app step and without Terminal.
+/// installer ZIP on the `installer` release. The wizard downloads it only when this Mac lacks
+/// them, checks it against the same EdDSA key as the app, then puts its contents in place
+/// itself (ComponentsPlacement) rather than running the Install.command inside it.
 public struct InstallerComponents: Sendable, Equatable {
     public static let archiveURL = URL(
         string: "https://github.com/raymondchins/Bridgeplay/releases/download/installer/Bridgeplay-Installer.zip"
@@ -16,6 +16,8 @@ public struct InstallerComponents: Sendable, Equatable {
     static let maximumLength: Int64 = 2_147_483_648
 
     public let length: Int64
+    /// Where the archive comes from, for "Downloading from …".
+    public var archiveHost: String { archiveURL.host() ?? "github.com" }
     public let signature: Data
     let verificationKey: Data
     var archiveURL = Self.archiveURL
@@ -118,25 +120,59 @@ public struct InstallerComponents: Sendable, Equatable {
         try InstallerRelease.verify(data, signature: signature, publicKey: verificationKey)
     }
 
-    /// Unpack the verified archive and run its Install.command for Steam, GPTK, the engine and
-    /// the configs. `status` gets each "==>" step the script announces.
+    /// Unpack the verified archive and put Steam, GPTK, the engine archives and the configs in
+    /// place (ComponentsPlacement). `status` gets each step as it starts.
     public static func install(archive: URL, work: URL, status: @escaping @Sendable (String) -> Void = { _ in },
                                download: @escaping @Sendable (InstallerDownloadProgress) -> Void = { _ in }) throws {
+        try install(archive: archive, work: work, status: status, download: download) { _ in }
+    }
+
+    static func install(archive: URL, work: URL, status: @escaping @Sendable (String) -> Void,
+                        download: @escaping @Sendable (InstallerDownloadProgress) -> Void,
+                        configure: (inout ComponentsPlacement) -> Void) throws {
         let unpacked = work.appending(path: "components")
         try? FileManager.default.removeItem(at: unpacked)
         try FileManager.default.createDirectory(at: unpacked, withIntermediateDirectories: true)
         try run("/usr/bin/ditto", ["-x", "-k", archive.path, unpacked.path])
-        let script = unpacked.appending(path: "Bridgeplay/Install.command")
-        guard FileManager.default.isReadableFile(atPath: script.path) else {
-            throw InstallerError.invalidInstallation("The components download has no Install.command.")
+        let source = unpacked.appending(path: "Bridgeplay")
+        try verifyAppleSigned(gptk: source.appending(path: "gptk"))
+        var placement = ComponentsPlacement(source: source)
+        configure(&placement)
+        try placement.place(status: status, download: download)
+    }
+
+    /// GPTK ships unmodified: D3DMetal.framework and every other Mach-O file must carry Apple's
+    /// own signature, the check scripts/package-installer.sh makes before packaging.
+    static func verifyAppleSigned(gptk: URL, check: (URL) -> Bool = { appleSigned($0) }) throws {
+        let fail = { (path: String) in InstallerError.componentsFailure("\(path) is not signed by Apple.") }
+        let framework = gptk.appending(path: "external/D3DMetal.framework")
+        guard check(framework) else { throw fail("D3DMetal.framework") }
+        var machO = 0
+        let files = FileManager.default.enumerator(at: gptk, includingPropertiesForKeys: [.isRegularFileKey])
+        while let file = files?.nextObject() as? URL {
+            if file.lastPathComponent == framework.lastPathComponent {
+                files?.skipDescendants()
+                continue
+            }
+            guard (try? file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true,
+                  isMachO(file) else { continue }
+            guard check(file) else { throw fail(file.lastPathComponent) }
+            machO += 1
         }
-        var environment = ProcessInfo.processInfo.environment
-        environment["BRIDGEPLAY_INSTALL_APP"] = "0"
-        environment["BRIDGEPLAY_NONINTERACTIVE"] = "1"
-        try run("/bin/bash", [script.path], environment: environment) { line in
-            if line.hasPrefix("==> ") { status(String(line.dropFirst(4))) }
-            else if let meter = InstallerDownloadProgress(curlMeter: line) { download(meter) }
-        }
+        guard machO > 0 else { throw InstallerError.componentsFailure("The Game Porting Toolkit in the download is incomplete.") }
+    }
+
+    static func appleSigned(_ url: URL) -> Bool {
+        (try? run("/usr/bin/codesign", ["--verify", "--strict", "--deep", "-R=anchor apple", url.path])) != nil
+    }
+
+    static func isMachO(_ url: URL) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? handle.close() }
+        guard let head = try? handle.read(upToCount: 4), head.count == 4 else { return false }
+        // Mach-O in either byte order, and universal binaries.
+        return [[0xCF, 0xFA, 0xED, 0xFE], [0xFE, 0xED, 0xFA, 0xCF], [0xCE, 0xFA, 0xED, 0xFE], [0xFE, 0xED, 0xFA, 0xCE],
+                [0xCA, 0xFE, 0xBA, 0xBE]].contains(Array(head))
     }
 
     @discardableResult

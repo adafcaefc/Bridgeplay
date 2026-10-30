@@ -13,6 +13,7 @@ struct SetupAssistantView: View {
     // How many rows of the current step have resolved; the rest still show "Checking…".
     @State private var revealed: Int
     @State private var forward = true
+    @State private var confirmingRepair = false
     private let fixedReveal: Int?
     private let onClose: (() -> Void)?
 
@@ -34,7 +35,7 @@ struct SetupAssistantView: View {
         HStack(spacing: 0) {
             SetupArt(step: model.step, progress: finishedFraction, running: model.step == .finish && model.isWorking)
                 .overlay(alignment: .topLeading) {
-                    HStack(spacing: 9) {
+                    HStack(spacing: 4.4) {
                         BridgeplayMark(size: 22)
                         Text(verbatim: "Bridgeplay")
                             .font(BP.display(13))
@@ -177,7 +178,7 @@ struct SetupAssistantView: View {
                       tone: model.hasSpace ? .ok : .bad))
             SetupHairline()
             checked(3, StatusRow(title: String(localized: "Rosetta 2"),
-                      value: model.rosettaInstalled ? String(localized: "Installed.") : String(localized: "Apple's translator for Windows games. Asks for your Mac password."),
+                      value: model.rosettaInstalled ? String(localized: "Installed.") : model.rosettaNote ?? String(localized: "Apple's translator for Windows games. Asks for your Mac password."),
                       tone: model.rosettaInstalled ? .ok : .warning,
                       action: model.rosettaInstalled ? nil : StatusAction(
                         label: String(localized: "Install"), isProminent: true, isEnabled: !model.isWorking
@@ -188,14 +189,22 @@ struct SetupAssistantView: View {
     @ViewBuilder
     private var graphicsStep: some View {
         StepHeader(step: model.step, title: "Add Apple's game graphics",
-                   detail: "Apple's Game Porting Toolkit (D3DMetal) runs DirectX 11 and 12 games on Metal. The installer includes it under Apple's non-commercial license, or link your own copy from Apple.")
+                   detail: "Apple's Game Porting Toolkit (D3DMetal) runs DirectX 11 and 12 games on Metal. Bridgeplay can download it for you under Apple's non-commercial license, or add your own copy from Apple.")
         SetupCard {
             if let gptk = model.gptk {
                 WizardRow(row: StatusRow(title: String(localized: "Game Porting Toolkit"),
                           value: String(localized: "Ready from \(gptk.libRoot.path(percentEncoded: false))."),
                           tone: .ok, trailing: gptk.version))
             } else {
-                WizardRow(row: StatusRow(title: String(localized: "Download it from Apple"),
+                // Apple's files unmodified, from Bridgeplay's installer release; Steam comes along when it's missing.
+                WizardRow(row: StatusRow(title: String(localized: "Download with Bridgeplay"),
+                          value: DownloadMeter.shared.title ?? model.gptkProgress
+                            ?? String(localized: "About 500 MB. Also installs Steam if this Mac doesn't have it yet."),
+                          action: StatusAction(label: String(localized: "Download"), isProminent: true, isEnabled: !model.isWorking) {
+                              Task { await model.downloadGPTK() }
+                          }), symbol: "arrow.down.circle")
+                SetupHairline()
+                WizardRow(row: StatusRow(title: String(localized: "Or download it from Apple"),
                           value: String(localized: "Sign in, then download the latest Game Porting Toolkit .dmg."),
                           action: StatusAction(label: String(localized: "Open Apple Downloads")) {
                               NSWorkspace.shared.open(URL(string: "https://developer.apple.com/download/all/?q=Game%20Porting%20Toolkit")!)
@@ -204,13 +213,13 @@ struct SetupAssistantView: View {
                 if let image = model.gptkImages.first {
                     WizardRow(row: StatusRow(title: String(localized: "Use the one in Downloads"),
                               value: image.lastPathComponent,
-                              action: StatusAction(label: String(localized: "Use This"), isProminent: true, isEnabled: !model.isWorking) {
+                              action: StatusAction(label: String(localized: "Use This"), isEnabled: !model.isWorking) {
                                   Task { await model.importGPTK(image) }
                               }), number: 2)
                 } else {
                     WizardRow(row: StatusRow(title: String(localized: "Add the disk image"),
                               value: String(localized: "Drag the .dmg onto this window, or choose it."),
-                              action: StatusAction(label: String(localized: "Choose…"), isProminent: true, isEnabled: !model.isWorking) { chooseImage() }),
+                              action: StatusAction(label: String(localized: "Choose…"), isEnabled: !model.isWorking) { chooseImage() }),
                               number: 2)
                 }
             }
@@ -296,6 +305,20 @@ struct SetupAssistantView: View {
                           detail: String(localized: "After a Bridgeplay update the switch can look on but no longer work. Turn it off and on again, or remove Bridgeplay from the list with − and add it back with +."),
                           action: StatusAction(label: Remedy.settingsButton, isProminent: true) { model.openAppManagement() }))
             }
+        } else if let tool = model.needsSteamRepair {
+            SetupCard {
+                WizardRow(row: StatusRow(title: String(localized: "Steam needs repair"),
+                          value: String(localized: "\(tool) is already set up in Steam. Repair Steam to remove it, and Setup continues by itself."),
+                          tone: .warning,
+                          action: StatusAction(label: String(localized: "Repair Steam"), isProminent: true) { confirmingRepair = true }))
+            }
+            .confirmationDialog(String(localized: "Replace Steam with Valve's bundle?"),
+                                isPresented: $confirmingRepair, titleVisibility: .visible) {
+                Button("Replace Steam", role: .destructive) { Task { await model.repairSteamAndRetry(with: status) } }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(String(localized: "\(tool) will stop working in Steam, and Steam may quit for a moment."))
+            }
         } else if model.tasks.contains(where: { $0.state != .done }) {
             approvals
         }
@@ -322,15 +345,14 @@ struct SetupAssistantView: View {
         .padding(.horizontal, 2)
     }
 
-    // Told before Set Up is pressed, so the macOS dialogs that follow are expected. Signing
-    // Steam with the step 3 certificate can make macOS ask for the login password, once per
-    // signed file (the add-on, Steam's executable, Steam.app), until the user picks Always
-    // Allow: that adds codesign to the key's partition list, which only the login password
-    // can change. App Management can ask too.
+    // Told before Set Up is pressed, so the macOS dialogs that follow are expected. An older
+    // install's certificate in the login keychain makes macOS ask for the login password, once
+    // per signed file, until the user picks Always Allow; one in Bridgeplay's own keychain
+    // never asks (LocalSigning). App Management can ask too.
     @ViewBuilder
     private var approvals: some View {
         SetupCard {
-            if model.trust == .done {
+            if model.trust == .done, model.trustInLoginKeychain {
                 WizardRow(row: StatusRow(title: String(localized: "Confirm the Steam update"),
                           value: String(localized: "macOS asks for your Mac password once, so Steam keeps working with Bridgeplay. Type it and choose Always Allow, and it won't ask again."),
                           tone: .info))
@@ -409,9 +431,10 @@ struct SetupAssistantView: View {
         }
     }
 
-    // App Management has its own card and button.
+    // App Management and Repair Steam have their own card and button.
     private func report(_ task: SetupAssistant.SetupTask) -> StatusAction? {
-        guard case .failed(let reason) = task.state, !model.needsAppManagement else { return nil }
+        guard case .failed(let reason) = task.state, !model.needsAppManagement, model.needsSteamRepair == nil
+        else { return nil }
         return StatusAction(label: ErrorReport.reportLabel) { ErrorReport.open(reason, in: "Setup: \(task.title)") }
     }
 
@@ -474,10 +497,17 @@ struct SetupAssistantView: View {
                     .disabled(!model.steamInstalled || !model.signedIn || model.isWorking)
                     .keyboardShortcut(.defaultAction)
             case .finish:
-                Button(model.failed ? "Try Again" : "Set Up") { Task { await model.finish(with: status) } }
-                    .buttonStyle(.pillLarge)
-                    .disabled(model.isWorking || !(model.failed || model.notStarted))
-                    .keyboardShortcut(.defaultAction)
+                // Secondary while the Repair Steam card leads, for a tool removed some other way.
+                if model.needsSteamRepair == nil {
+                    Button(model.failed ? "Try Again" : "Set Up") { Task { await model.finish(with: status) } }
+                        .buttonStyle(.pillLarge)
+                        .disabled(model.isWorking || !(model.failed || model.notStarted))
+                        .keyboardShortcut(.defaultAction)
+                } else {
+                    Button("Try Again") { Task { await model.finish(with: status) } }
+                        .buttonStyle(.pillSecondaryLarge)
+                        .disabled(model.isWorking)
+                }
             case .done:
                 Button("Close") { model.dismiss(); close() }
                     .buttonStyle(.pillSecondaryLarge)

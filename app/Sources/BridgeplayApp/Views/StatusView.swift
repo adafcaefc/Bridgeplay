@@ -165,7 +165,7 @@ struct StatusRow: View {
 
 struct StatusView: View {
     @Environment(SystemStatus.self) private var status
-    // gamefixes/default.conf, read when the page opens; the switches write it straight away.
+    // Two of the Game Defaults (GameDefaults), read when the page opens; the switches write them straight away.
     @State private var metalHUD = GameDefaults.isOn(.metalHUD)
     @State private var highResolution = GameDefaults.isOn(.highResolution)
     @State private var gameDefaultsError: String?
@@ -461,7 +461,7 @@ struct StatusView: View {
         } header: {
             Text("For Every Game")
         } footer: {
-            Text("A game's own settings in Steam Properties › Bridgeplay win over these.")
+            Text("A game's own settings in Steam Properties › Bridgeplay win over these. Game Defaults has the rest.")
         }
     }
 
@@ -611,12 +611,14 @@ struct StatusView: View {
                 tone: .warning,
                 action: installAction(prominent: true)
             )
-        case .foreign:
+        case .foreign(let insert):
+            let tool = SteamBundle.foreignTool(in: insert, deployed: SupportPaths.Steam.deployedDylib.path(percentEncoded: false))
+                ?? insert
             StatusRow(
                 title: "Bridgeplay",
-                value: String(localized: "Another dylib is present."),
+                value: String(localized: "\(tool) is already set up in Steam."),
                 tone: .warning,
-                detail: String(localized: "Repair your Steam install before installing Bridgeplay.")
+                detail: String(localized: "Repair Steam to remove it, then install Bridgeplay.")
             )
         }
     }
