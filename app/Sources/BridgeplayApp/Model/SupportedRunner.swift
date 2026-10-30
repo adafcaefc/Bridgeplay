@@ -255,7 +255,7 @@ enum SupportedRunners {
             ],
             patchedNtdll: [
                 .x86_64Windows: "08a825e8236e79c909fae3934ca5e8a195a344d06f8affb6e13cdf1bd9ffa783",
-                .i386Windows: "8206b9f0135f287591ef8bdc010c9067ed08585cff24525f8900e7290d90dbf1",
+                .i386Windows: "88f9a1d16dd7127100eab902156390ec2a5ec67770cfddd3fd3f1237c9965309",
             ],
             tools: [
                 CompatTool(name: "bridgeplay-proton-winehq", flavor: .rosetta, display: "WineHQ 11.15 - Rosetta"),

@@ -462,7 +462,7 @@ rebuilt Mach-O file needs its line there updated too; `SignedPinTests` fails unt
 | `detour32-fex.bin` | `ntdll-patch/build32.sh` (fex) | `b4c697ba396ecb59125c505666ad3465d1208b8a1e3e53a0c457657b341376b9` | `NtdllPatcher.byBuild` |
 | `detour32-winecx-11.15.bin` | `ntdll-patch/build32.sh` (winecx-11.15) | `b8363acbaeedeb5f22379e0ec6394cf721c384f484b80e1f51a08fb74e41d13b` | `FreeEngineWinecx.v1115.ntdllPatches` |
 | `detour32-winecx-11.17.bin` | `ntdll-patch/build32.sh` (winecx-11.17) | `085df281ffe81c2803f44dd30df885248e5510c8560f0f20a5ae36e8446f7559` | `FreeEngineWinecx.v1117.ntdllPatches` |
-| `detour32-winehq-11.15.bin` | `ntdll-patch/build32.sh` (winehq-11.15) | `a3b0e422b5133d4b3c795f24771bf247fee8a3b0c9fbb765f7276e48e52c93e6` | `NtdllPatcher.byBuild` |
+| `detour32-winehq-11.15.bin` | `ntdll-patch/build32.sh` (winehq-11.15) | `527431a3a74e9dff7bc3582277ddfa7b44bcac6fba285c028fd2c94fd9202418` | `NtdllPatcher.byBuild` |
 | `detour32.bin` | `ntdll-patch/build32.sh` (rosetta) | `2758d4f6783c853c460187f83f4fb9b1105380d194126ef83fc85e2596d3036a` | `NtdllPatcher.byBuild` |
 | `detour64-fex-41069.bin` | `ntdll-patch/build64.sh` (fex-41069) | `b27484eaed592366ddd3a5b3c565c2dc05e8fa255fbd7e19d9d8eb619ff57c23` | `NtdllPatcher.byBuild` |
 | `detour64-fex-41073.bin` | `ntdll-patch/build64.sh` (fex-41073) | `8a6fe80587815393059cb2cecfdc542b666c158e147560875ff19f37221726d2` | `NtdllPatcher.byBuild` |
